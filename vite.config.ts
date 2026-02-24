@@ -1,10 +1,18 @@
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { defineConfig } from "vite";
 import { crx } from "@crxjs/vite-plugin";
-import manifest from "./manifest.json";
+import manifest from "./manifest.config.ts";
+import zip from "vite-plugin-zip-pack";
 
-// https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), crx({ manifest }), tailwindcss()],
+  plugins: [
+    crx({ manifest }),
+    tailwindcss(),
+    zip({ outDir: "release", outFileName: "release.zip" }),
+  ],
+  server: {
+    cors: {
+      origin: [/chrome-extension:\/\//],
+    },
+  },
 });
