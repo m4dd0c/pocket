@@ -4,8 +4,12 @@
 (() => {
   const _create = document.createElement.bind(document);
   const mediaEls: HTMLMediaElement[] = [];
+  let currentSpeed = Number(localStorage.getItem("pocket-speed") || 1);
+  let preservePitch = localStorage.getItem("pocket-pp") !== "false";
 
-  // ── 1. playbackRate protection ──────────────────────────────
+  // ═══════════════════════════════════════════════════════════════
+  // 1. PLAYBACK RATE PROTECTION
+  // ═══════════════════════════════════════════════════════════════
   const desc = Object.getOwnPropertyDescriptor(
     HTMLMediaElement.prototype,
     "playbackRate",
@@ -19,15 +23,14 @@
       if (value?.source === "pocket") {
         desc!.set!.call(this, value.value);
       } else {
-        const sl = document.querySelector(
-          "#pocket-slider",
-        ) as HTMLInputElement | null;
-        desc!.set!.call(this, sl ? Number(sl.value) : 1);
+        desc!.set!.call(this, currentSpeed);
       }
     },
   });
 
-  // ── 2. Element dragnet ──────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════
+  // 2. ELEMENT DRAGNET
+  // ═══════════════════════════════════════════════════════════════
   document.createElement = function (
     tag: string,
     opts?: ElementCreationOptions,
@@ -38,170 +41,279 @@
     return el;
   };
 
-  // ── 3. DOM refs ─────────────────────────────────────────────
-  let slider: HTMLInputElement;
-  let sliderMinSpan: HTMLSpanElement;
-  let sliderMaxSpan: HTMLSpanElement;
-  let ppCheckbox: HTMLInputElement;
-  let ppBtn: HTMLButtonElement;
-  let ppOff: SVGPathElement;
-  let ppOn: SVGPathElement;
-  let iconText: HTMLSpanElement;
-  let iconEl: HTMLDivElement;
-  let panel: HTMLDivElement;
-  let controls: HTMLDivElement;
-  let settings: HTMLDivElement;
-  let minIn: HTMLInputElement;
-  let maxIn: HTMLInputElement;
-  let loopABtn: HTMLButtonElement;
-  let loopBBtn: HTMLButtonElement;
-  let loopClearBtn: HTMLButtonElement;
-  let loopInfo: HTMLSpanElement;
-
-  // ── 4. Loop state ───────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════
+  // 3. STATE
+  // ═══════════════════════════════════════════════════════════════
   let loopA: number | null = null;
   let loopB: number | null = null;
   let loopActive = false;
+  let lastDuration = 0;
+  let speedPanelOpen = false;
 
+  // DOM refs
+  let speedIcon: HTMLDivElement;
+  let speedPanel: HTMLDivElement;
+  let speedText: HTMLSpanElement;
+  let customSpeedIn: HTMLInputElement;
+  let ppCb: HTMLInputElement;
+  let loopABtn: HTMLButtonElement;
+  let loopBBtn: HTMLButtonElement;
+  let loopClearBtn: HTMLButtonElement;
+  let overlayEl: HTMLDivElement | null = null;
+  let markerAEl: HTMLDivElement | null = null;
+  let markerBEl: HTMLDivElement | null = null;
+
+  // ═══════════════════════════════════════════════════════════════
+  // 4. SPEED FUNCTIONS
+  // ═══════════════════════════════════════════════════════════════
+  const applySpeed = (val: number) => {
+    if (isNaN(val)) return;
+    currentSpeed = Math.round(Math.max(0.25, Math.min(4, val)) * 100) / 100;
+    localStorage.setItem("pocket-speed", String(currentSpeed));
+    if (speedText)
+      speedText.textContent = currentSpeed === 1 ? "1x" : `${currentSpeed}x`;
+    if (customSpeedIn) customSpeedIn.value = String(currentSpeed);
+
+    document.querySelectorAll(".pocket-speed-opt").forEach((el) => {
+      const s = Number((el as HTMLElement).dataset.speed);
+      el.classList.toggle("pocket-speed-active", s === currentSpeed);
+    });
+
+    mediaEls.forEach((el) => {
+      (el as any).playbackRate = { source: "pocket", value: currentSpeed };
+      el.preservesPitch = preservePitch;
+    });
+  };
+
+  const toggleSpeedPanel = () => {
+    speedPanelOpen = !speedPanelOpen;
+    if (speedPanel)
+      speedPanel.style.display = speedPanelOpen ? "block" : "none";
+    if (speedIcon) speedIcon.classList.toggle("pocket-active", speedPanelOpen);
+  };
+
+  // ═══════════════════════════════════════════════════════════════
+  // 5. LOOP FUNCTIONS
+  // ═══════════════════════════════════════════════════════════════
   const fmt = (s: number) =>
     `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
-  const updateLoopUI = () => {
-    loopABtn.classList.toggle("pocket-active", loopA !== null);
-    loopBBtn.classList.toggle("pocket-active", loopB !== null);
-    loopClearBtn.style.display = loopActive ? "inline-block" : "none";
-    loopInfo.textContent =
-      loopA !== null && loopB !== null
-        ? `${fmt(loopA)} → ${fmt(loopB)}`
-        : loopA !== null
-          ? `${fmt(loopA)} → …`
-          : "";
+  const setLoopPoint = (point: "a" | "b") => {
+    const el = mediaEls[0];
+    if (!el) return;
+    if (point === "a") loopA = el.currentTime;
+    else loopB = el.currentTime;
+    // Auto-sort: ensure A < B
+    if (loopA !== null && loopB !== null && loopA > loopB) {
+      [loopA, loopB] = [loopB, loopA];
+    }
+    if (loopA !== null && loopB !== null) loopActive = true;
+    updateLoopUI();
   };
 
-  // rAF loop checker
-  const checkLoop = () => {
+  const clearLoop = () => {
+    loopA = null;
+    loopB = null;
+    loopActive = false;
+    updateLoopUI();
+  };
+
+  const updateLoopUI = () => {
+    if (loopABtn) {
+      loopABtn.classList.toggle("pocket-loop-set", loopA !== null);
+      loopABtn.title =
+        loopA !== null
+          ? `Loop start: ${fmt(loopA)} – click to update`
+          : "Set loop start (A)";
+    }
+    if (loopBBtn) {
+      loopBBtn.classList.toggle("pocket-loop-set", loopB !== null);
+      loopBBtn.title =
+        loopB !== null
+          ? `Loop end: ${fmt(loopB)} – click to update`
+          : "Set loop end (B)";
+    }
+    if (loopClearBtn) {
+      loopClearBtn.style.display =
+        loopA !== null || loopB !== null ? "inline-flex" : "none";
+    }
+    updateOverlay();
+  };
+
+  // ═══════════════════════════════════════════════════════════════
+  // 6. TIMELINE OVERLAY
+  // ═══════════════════════════════════════════════════════════════
+  const ensureOverlay = (): HTMLElement | null => {
+    const bg = document.querySelector(
+      '[data-testid="progress-bar-background"]',
+    ) as HTMLElement | null;
+    if (!bg) return null;
+
+    if (!overlayEl || !bg.contains(overlayEl)) {
+      overlayEl = _create("div") as HTMLDivElement;
+      overlayEl.id = "pocket-overlay";
+      markerAEl = _create("div") as HTMLDivElement;
+      markerAEl.className = "pocket-marker pocket-marker-a";
+      markerBEl = _create("div") as HTMLDivElement;
+      markerBEl.className = "pocket-marker pocket-marker-b";
+      bg.appendChild(overlayEl);
+      bg.appendChild(markerAEl);
+      bg.appendChild(markerBEl);
+    }
+    return bg;
+  };
+
+  const updateOverlay = () => {
+    const input = document.querySelector(
+      '[data-testid="playback-progressbar"] input[type="range"]',
+    ) as HTMLInputElement | null;
+    if (!input) return;
+    const maxMs = Number(input.max);
+    if (maxMs <= 0) return;
+
+    if (!ensureOverlay() || !overlayEl || !markerAEl || !markerBEl) return;
+
+    if (loopA !== null) {
+      const aPct = Math.min(100, ((loopA * 1000) / maxMs) * 100);
+      markerAEl.style.display = "block";
+      markerAEl.style.left = `${aPct}%`;
+
+      if (loopB !== null) {
+        const bPct = Math.min(100, ((loopB * 1000) / maxMs) * 100);
+        markerBEl.style.display = "block";
+        markerBEl.style.left = `${bPct}%`;
+        overlayEl.style.display = "block";
+        overlayEl.style.left = `${aPct}%`;
+        overlayEl.style.width = `${bPct - aPct}%`;
+      } else {
+        markerBEl.style.display = "none";
+        overlayEl.style.display = "none";
+      }
+    } else {
+      markerAEl.style.display = "none";
+      markerBEl.style.display = "none";
+      overlayEl.style.display = "none";
+    }
+  };
+
+  // ═══════════════════════════════════════════════════════════════
+  // 7. RAF LOOP
+  // ═══════════════════════════════════════════════════════════════
+  let fc = 0;
+  const tick = () => {
+    // Loop enforcement
     if (loopActive && loopA !== null && loopB !== null) {
       const el = mediaEls[0];
       if (el && el.currentTime >= loopB) el.currentTime = loopA;
     }
-    requestAnimationFrame(checkLoop);
+    // Periodic checks (~500ms)
+    if (++fc % 30 === 0) {
+      const input = document.querySelector(
+        '[data-testid="playback-progressbar"] input[type="range"]',
+      ) as HTMLInputElement | null;
+      if (input) {
+        const maxMs = Number(input.max);
+        // Track change → auto-clear loop
+        if (
+          lastDuration > 0 &&
+          Math.abs(maxMs - lastDuration) > 1000 &&
+          loopActive
+        ) {
+          clearLoop();
+        }
+        lastDuration = maxMs;
+      }
+      // Keep overlay in sync (Spotify may re-render)
+      if (loopA !== null || loopB !== null) updateOverlay();
+    }
+    requestAnimationFrame(tick);
   };
-  requestAnimationFrame(checkLoop);
+  requestAnimationFrame(tick);
 
-  // ── 5. Apply values ─────────────────────────────────────────
-  const apply = () => {
-    const val = Number(slider.value);
-    const mn = Number(minIn?.value || slider.min);
-    const mx = Number(maxIn?.value || slider.max);
-    const pp = ppCheckbox.checked;
-
-    iconText.textContent = `${val.toFixed(2)}x`;
-    slider.style.backgroundSize = `${((val - mn) * 100) / (mx - mn)}% 100%`;
-
-    ppBtn.classList.toggle("pocket-active", pp);
-    ppOff.style.display = pp ? "none" : "block";
-    ppOn.style.display = pp ? "block" : "none";
-
-    localStorage.setItem("pocket-speed", String(val));
-    localStorage.setItem("pocket-pp", String(pp));
-    localStorage.setItem("pocket-min", String(mn));
-    localStorage.setItem("pocket-max", String(mx));
-
-    mediaEls.forEach((el) => {
-      (el as any).playbackRate = { source: "pocket", value: val };
-      el.preservesPitch = pp;
-    });
-  };
-
-  // ── 6. Toggles ──────────────────────────────────────────────
-  let panelOpen = false;
-  let settingsOpen = false;
-
-  const togglePanel = () => {
-    panelOpen = !panelOpen;
-    panel.style.display = panelOpen ? "block" : "none";
-    iconEl.classList.toggle("pocket-active", panelOpen);
-    if (!panelOpen && settingsOpen) toggleSettings();
-  };
-
-  const toggleSettings = () => {
-    settingsOpen = !settingsOpen;
-    controls.style.display = settingsOpen ? "none" : "block";
-    settings.style.display = settingsOpen ? "block" : "none";
-  };
-
-  // ── 7. Inject CSS ───────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════
+  // 8. CSS
+  // ═══════════════════════════════════════════════════════════════
   const addStyles = () => {
     const s = _create("style");
     s.textContent = `
-#pocket{user-select:none}
-#pocket-panel{border:1px solid #282828;bottom:88px;right:0;position:absolute;z-index:9999}
-#pocket-icon{display:flex;flex-wrap:wrap;justify-content:center;width:2rem;height:2rem;cursor:pointer}
-#pocket-icon:hover{color:#fff}
-#pocket-controls,#pocket-settings{padding:.5rem .75rem;background:#171717}
-#pocket-controls{width:320px}
-#pocket-settings{width:240px}
-#pocket-settings input[type=number]{margin-left:.5rem;width:56px;border-radius:2px;padding:0 2px;text-align:center;font-size:.875rem;background:#282828;color:#fff;border:none}
-.pocket-row{display:flex;flex-wrap:nowrap;align-items:center;height:32px}
-.pocket-header{color:#f0f0f0;font-weight:600;line-height:1}
-.pocket-spacer{flex-grow:1}
-.pocket-text-btn{background:#535353;color:#fff;font-weight:600;font-size:.625rem;padding:2px 4px;border-radius:2px;border:none;cursor:pointer}
-.pocket-text-btn:hover{background:#9b9b9b}
+/* ── Speed Control ── */
+#pocket-speed-root{position:relative;display:flex;align-items:center;user-select:none}
+#pocket-speed-icon{display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;width:2rem;height:2rem;color:#b3b3b3;transition:color .15s,transform .15s}
+#pocket-speed-icon:hover{color:#fff;transform:scale(1.06)}
+#pocket-speed-icon .pocket-speed-text{font-size:.6875rem;font-weight:600;margin-top:-2px;line-height:1}
 .pocket-active{color:#1DB954!important}
-.pocket-sep{border:none;border-top:1px solid #282828;margin:6px 0}
-#pocket-loop-section .pocket-loop-btn{background:transparent;border:1px solid #535353;color:#b3b3b3;font-size:.75rem;font-weight:600;padding:2px 10px;border-radius:3px;cursor:pointer;margin-right:4px}
-#pocket-loop-section .pocket-loop-btn:hover{border-color:#fff;color:#fff}
-#pocket-loop-section .pocket-loop-btn.pocket-active{border-color:#1DB954;color:#1DB954}
-#pocket button{cursor:pointer}
-#pocket input[type=range]{-webkit-appearance:none;width:100%;height:6px;background:#494949;border-radius:6px;background-image:linear-gradient(#b3b3b3,#b3b3b3);background-size:33% 100%;background-repeat:no-repeat;border:none}
-#pocket input[type=range]:hover{background-image:linear-gradient(#1DB954,#1DB954)}
-#pocket input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;display:none;border-radius:50%;height:14px;width:14px;background:#fff;margin-top:-4px;box-shadow:0 2px 4px rgba(0,0,0,.3)}
-#pocket input[type=range]:hover::-webkit-slider-thumb{display:block;cursor:ew-resize}
-#pocket input[type=range]:hover::-webkit-slider-runnable-track{cursor:ew-resize}
-#pocket input[type=number]::-webkit-outer-spin-button,#pocket input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
-#pocket input[type=number]:focus{outline:0}
-.pocket-loop-info{font-size:.625rem;color:#b3b3b3;margin-left:4px;font-family:monospace}
+
+#pocket-speed-panel{display:none;position:absolute;bottom:44px;left:50%;transform:translateX(-50%);background:#282828;border:1px solid #3e3e3e;border-radius:8px;padding:8px 0;min-width:180px;z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+.pocket-sp-header{display:flex;align-items:center;justify-content:space-between;padding:4px 12px 8px;border-bottom:1px solid #3e3e3e;margin-bottom:4px}
+.pocket-sp-header span{color:#fff;font-size:.8125rem;font-weight:700}
+.pocket-pp-label{display:flex;align-items:center;gap:4px;color:#b3b3b3;font-size:.6875rem;cursor:pointer}
+.pocket-pp-label:hover{color:#fff}
+.pocket-pp-label input{accent-color:#1DB954;width:13px;height:13px;cursor:pointer}
+.pocket-speed-list{max-height:260px;overflow-y:auto}
+.pocket-speed-opt{display:flex;align-items:center;width:100%;padding:6px 12px;background:none;border:none;color:#b3b3b3;font-size:.8125rem;cursor:pointer;text-align:left}
+.pocket-speed-opt:hover{background:#3e3e3e;color:#fff}
+.pocket-speed-active{color:#1DB954!important;font-weight:700}
+.pocket-speed-active::before{content:"✓";margin-right:6px;font-size:.7rem}
+.pocket-speed-custom{display:flex;align-items:center;gap:6px;padding:8px 12px;border-top:1px solid #3e3e3e;margin-top:4px}
+.pocket-speed-custom label{color:#b3b3b3;font-size:.75rem;white-space:nowrap}
+.pocket-speed-custom input{width:56px;background:#1a1a1a;border:1px solid #535353;border-radius:4px;color:#fff;font-size:.8125rem;padding:3px 6px;text-align:center}
+.pocket-speed-custom input:focus{outline:none;border-color:#1DB954}
+.pocket-speed-custom input::-webkit-outer-spin-button,
+.pocket-speed-custom input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.pocket-speed-custom button{background:#1DB954;color:#000;border:none;border-radius:4px;padding:3px 8px;font-size:.75rem;font-weight:700;cursor:pointer;white-space:nowrap}
+.pocket-speed-custom button:hover{background:#1ed760}
+
+/* ── A-B Loop Buttons ── */
+#pocket-loop-container{display:inline-flex;align-items:center;margin-left:8px;gap:2px}
+.pocket-loop-btn{background:none!important;border:none!important;color:#b3b3b3;cursor:pointer;font-size:.6875rem;font-weight:700;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;transition:color .12s,transform .12s}
+.pocket-loop-btn:hover{color:#fff;transform:scale(1.1)}
+.pocket-loop-set{color:#1DB954!important}
+.pocket-loop-clear{font-size:.5625rem;width:22px;height:22px}
+.pocket-loop-clear:hover{color:#e74c3c!important}
+
+/* ── Timeline Overlay ── */
+#pocket-overlay{position:absolute;top:0;bottom:0;background:rgba(29,185,84,.22);pointer-events:none;border-radius:2px;z-index:1;display:none}
+.pocket-marker{position:absolute;top:-4px;bottom:-4px;width:3px;background:#1DB954;border-radius:1.5px;pointer-events:none;z-index:2;display:none;transform:translateX(-50%)}
+.pocket-marker-a{background:#1DB954}
+.pocket-marker-b{background:#1DB954}
 `;
     document.head.appendChild(s);
   };
 
-  // ── 8. Create HTML ──────────────────────────────────────────
-  const addHTML = () => {
-    const old = document.querySelector("#pocket");
+  // ═══════════════════════════════════════════════════════════════
+  // 9. HTML CREATION
+  // ═══════════════════════════════════════════════════════════════
+  const PRESETS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
+
+  const addSpeedControl = () => {
+    const old = document.querySelector("#pocket-speed-root");
     if (old) old.remove();
 
-    controls = _create("div") as HTMLDivElement;
-    controls.id = "pocket-controls";
-    controls.innerHTML = `
-<div class="pocket-row"><span class="pocket-header">Playback Speed</span><div class="pocket-spacer"></div><button class="pocket-text-btn" id="pocket-settings-btn">SETTINGS</button></div>
-<div class="pocket-row"><span id="pocket-min-label" style="line-height:32px">0.5x</span><input id="pocket-slider" type="range" min="0.5" max="2" step="0.01" style="margin:0 .75rem"><span id="pocket-max-label" style="line-height:32px">2x</span></div>
-<div class="pocket-row"><button id="pocket-pp-btn" class="pocket-active" style="font-size:16px;background:transparent;border:none;display:flex;align-items:center"><input type="checkbox" id="pocket-pp-cb" style="display:none"><svg width="1.27rem" height="1.125rem" viewBox="0 0 576 512" fill="currentColor"><path class="pp-off" d="M384 64H192C85.961 64 0 149.961 0 256s85.961 192 192 192h192c106.039 0 192-85.961 192-192S490.039 64 384 64zM64 256c0-70.741 57.249-128 128-128c70.741 0 128 57.249 128 128c0 70.741-57.249 128-128 128c-70.741 0-128-57.249-128-128zm320 128h-48.905c65.217-72.858 65.236-183.12 0-256H384c70.741 0 128 57.249 128 128c0 70.74-57.249 128-128 128z" style="display:none"/><path class="pp-on" d="M384 64H192C86 64 0 150 0 256s86 192 192 192h192c106 0 192-86 192-192S490 64 384 64zm0 320c-70.8 0-128-57.3-128-128c0-70.8 57.3-128 128-128c70.8 0 128 57.3 128 128c0 70.8-57.3 128-128 128z" style="display:none"/></svg><span style="margin-left:.5rem;line-height:1">Preserve Pitch</span></button><div class="pocket-spacer"></div><button id="pocket-reset-btn" class="pocket-text-btn">1x</button></div>
-<hr class="pocket-sep">
-<div class="pocket-row" id="pocket-loop-section"><span style="font-weight:600;color:#f0f0f0;font-size:.75rem;margin-right:8px">A-B</span><button class="pocket-loop-btn" id="pocket-loop-a">A</button><button class="pocket-loop-btn" id="pocket-loop-b">B</button><button class="pocket-loop-btn" id="pocket-loop-clear" style="display:none;color:#e74c3c;border-color:#e74c3c">✕</button><span class="pocket-loop-info" id="pocket-loop-info"></span></div>`;
+    const root = _create("div");
+    root.id = "pocket-speed-root";
 
-    settings = _create("div") as HTMLDivElement;
-    settings.id = "pocket-settings";
-    settings.style.display = "none";
-    settings.innerHTML = `
-<div class="pocket-row"><span class="pocket-header">Settings</span><div class="pocket-spacer"></div><button class="pocket-text-btn" id="pocket-settings-close">CLOSE</button></div>
-<div style="display:flex;flex-wrap:wrap;width:98px"><label class="pocket-row" style="width:100%">Min:<div class="pocket-spacer"></div><input type="number" id="pocket-min-in" min="0.07" max="15.99" step="0.1"></label><label class="pocket-row" style="width:100%">Max:<div class="pocket-spacer"></div><input type="number" id="pocket-max-in" min="0.1" max="16" step="0.1"></label></div>
-<div class="pocket-row"><div class="pocket-spacer"></div><button class="pocket-text-btn" id="pocket-minmax-reset">RESET</button><button class="pocket-text-btn" id="pocket-minmax-save" style="margin-left:.5rem">SAVE</button></div>`;
+    // Icon
+    const icon = _create("div") as HTMLDivElement;
+    icon.id = "pocket-speed-icon";
+    icon.title = "Playback speed";
+    icon.innerHTML = `<svg width="1.25rem" height="1.25rem" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2.05v2c4.39.54 7.5 4.53 6.96 8.92c-.46 3.64-3.32 6.53-6.96 6.96v2c5.5-.55 9.5-5.43 8.95-10.93c-.45-4.75-4.22-8.5-8.95-8.97v.02M5.67 19.74A9.994 9.994 0 0 0 11 22v-2a8.002 8.002 0 0 1-3.9-1.63l-1.43 1.37m1.43-14c1.12-.9 2.47-1.48 3.9-1.68v-2c-1.95.19-3.81.94-5.33 2.2L7.1 5.74M5.69 7.1L4.26 5.67A9.885 9.885 0 0 0 2.05 11h2c.19-1.42.75-2.77 1.64-3.9M4.06 13h-2c.2 1.96.97 3.81 2.21 5.33l1.42-1.43A8.002 8.002 0 0 1 4.06 13M10 16.5l6-4.5l-6-4.5v9z"/></svg><span class="pocket-speed-text">${currentSpeed === 1 ? "1x" : currentSpeed + "x"}</span>`;
 
-    panel = _create("div") as HTMLDivElement;
-    panel.id = "pocket-panel";
-    panel.style.display = "none";
-    panel.appendChild(controls);
-    panel.appendChild(settings);
+    // Panel
+    const panel = _create("div");
+    panel.id = "pocket-speed-panel";
+    const opts = PRESETS.map(
+      (s) =>
+        `<button class="pocket-speed-opt${s === currentSpeed ? " pocket-speed-active" : ""}" data-speed="${s}">${s}x</button>`,
+    ).join("");
+    panel.innerHTML = `
+<div class="pocket-sp-header"><span>Speed</span><label class="pocket-pp-label"><input type="checkbox" id="pocket-pp-cb"${preservePitch ? " checked" : ""}> Pitch</label></div>
+<div class="pocket-speed-list">${opts}</div>
+<div class="pocket-speed-custom"><label>Custom</label><input type="number" id="pocket-custom-speed" min="0.25" max="4" step="0.05" value="${currentSpeed}"><button id="pocket-custom-apply">Set</button></div>`;
 
-    const spsIcon = _create("div") as HTMLDivElement;
-    spsIcon.id = "pocket-icon";
-    spsIcon.innerHTML = `<svg width="2rem" height="2rem" viewBox="0 0 24 24" fill="currentColor" style="padding:.375rem"><path d="M13 2.05v2c4.39.54 7.5 4.53 6.96 8.92c-.46 3.64-3.32 6.53-6.96 6.96v2c5.5-.55 9.5-5.43 8.95-10.93c-.45-4.75-4.22-8.5-8.95-8.97v.02M5.67 19.74A9.994 9.994 0 0 0 11 22v-2a8.002 8.002 0 0 1-3.9-1.63l-1.43 1.37m1.43-14c1.12-.9 2.47-1.48 3.9-1.68v-2c-1.95.19-3.81.94-5.33 2.2L7.1 5.74M5.69 7.1L4.26 5.67A9.885 9.885 0 0 0 2.05 11h2c.19-1.42.75-2.77 1.64-3.9M4.06 13h-2c.2 1.96.97 3.81 2.21 5.33l1.42-1.43A8.002 8.002 0 0 1 4.06 13M10 16.5l6-4.5l-6-4.5v9z"/></svg><span id="pocket-icon-text" style="margin-top:-.125rem;font-size:.6875rem">1.00x</span>`;
-
-    const root = _create("div") as HTMLDivElement;
-    root.id = "pocket";
     root.appendChild(panel);
-    root.appendChild(spsIcon);
+    root.appendChild(icon);
 
+    // Insert near volume
     const muteBtn = document.querySelector(
       'button[aria-describedby="volume-icon"]',
     );
@@ -210,149 +322,136 @@
     container.insertBefore(root, container.firstChild);
   };
 
-  // ── 9. Bind events & init from storage ──────────────────────
+  const addLoopButtons = () => {
+    const old = document.querySelector("#pocket-loop-container");
+    if (old) old.remove();
+
+    const c = _create("div");
+    c.id = "pocket-loop-container";
+    c.innerHTML = `
+<button class="pocket-loop-btn" id="pocket-loop-a" title="Set loop start (A)">A</button>
+<button class="pocket-loop-btn" id="pocket-loop-b" title="Set loop end (B)">B</button>
+<button class="pocket-loop-btn pocket-loop-clear" id="pocket-loop-clear" title="Clear loop" style="display:none">✕</button>`;
+
+    const repeatBtn = document.querySelector(
+      '[data-testid="control-button-repeat"]',
+    );
+    if (!repeatBtn) throw "Repeat button not found";
+    repeatBtn.parentElement!.appendChild(c);
+  };
+
+  // ═══════════════════════════════════════════════════════════════
+  // 10. EVENT BINDING
+  // ═══════════════════════════════════════════════════════════════
   const addJS = () => {
-    slider = document.querySelector("#pocket-slider") as HTMLInputElement;
-    sliderMinSpan = document.querySelector(
-      "#pocket-min-label",
-    ) as HTMLSpanElement;
-    sliderMaxSpan = document.querySelector(
-      "#pocket-max-label",
-    ) as HTMLSpanElement;
-    ppCheckbox = document.querySelector("#pocket-pp-cb") as HTMLInputElement;
-    ppBtn = document.querySelector("#pocket-pp-btn") as HTMLButtonElement;
-    ppOff = document.querySelector("path.pp-off") as SVGPathElement;
-    ppOn = document.querySelector("path.pp-on") as SVGPathElement;
-    iconText = document.querySelector("#pocket-icon-text") as HTMLSpanElement;
-    iconEl = document.querySelector("#pocket-icon") as HTMLDivElement;
-    minIn = document.querySelector("#pocket-min-in") as HTMLInputElement;
-    maxIn = document.querySelector("#pocket-max-in") as HTMLInputElement;
+    speedIcon = document.querySelector("#pocket-speed-icon") as HTMLDivElement;
+    speedPanel = document.querySelector(
+      "#pocket-speed-panel",
+    ) as HTMLDivElement;
+    speedText = document.querySelector(".pocket-speed-text") as HTMLSpanElement;
+    customSpeedIn = document.querySelector(
+      "#pocket-custom-speed",
+    ) as HTMLInputElement;
+    ppCb = document.querySelector("#pocket-pp-cb") as HTMLInputElement;
     loopABtn = document.querySelector("#pocket-loop-a") as HTMLButtonElement;
     loopBBtn = document.querySelector("#pocket-loop-b") as HTMLButtonElement;
     loopClearBtn = document.querySelector(
       "#pocket-loop-clear",
     ) as HTMLButtonElement;
-    loopInfo = document.querySelector("#pocket-loop-info") as HTMLSpanElement;
 
-    // Restore from localStorage
-    const savedSpeed = Number(localStorage.getItem("pocket-speed") || 1);
-    const savedPP = localStorage.getItem("pocket-pp") !== "false";
-    const savedMin = Number(localStorage.getItem("pocket-min") || 0.5);
-    const savedMax = Number(localStorage.getItem("pocket-max") || 2);
-
-    ppCheckbox.checked = savedPP;
-    slider.value = String(savedSpeed);
-    slider.min = String(savedMin);
-    slider.max = String(savedMax);
-    minIn.value = String(savedMin);
-    maxIn.value = String(savedMax);
-    sliderMinSpan.textContent = `${savedMin}x`;
-    sliderMaxSpan.textContent = `${savedMax}x`;
-
-    // Events
-    slider.oninput = apply;
-    ppBtn.onclick = () => {
-      ppCheckbox.checked = !ppCheckbox.checked;
-      apply();
+    // Speed icon toggle
+    speedIcon.onclick = (e) => {
+      e.stopPropagation();
+      toggleSpeedPanel();
     };
-    iconEl.onclick = togglePanel;
 
-    document
-      .querySelector("#pocket-reset-btn")!
-      .addEventListener("click", () => {
-        if (Number(slider.max) < 1) {
-          slider.max = "1";
-          maxIn.value = "1";
-          sliderMaxSpan.textContent = "1x";
-        }
-        if (Number(slider.min) > 1) {
-          slider.min = "1";
-          minIn.value = "1";
-          sliderMinSpan.textContent = "1x";
-        }
-        slider.value = "1";
-        apply();
-      });
-
-    document
-      .querySelector("#pocket-settings-btn")!
-      .addEventListener("click", toggleSettings);
-    document
-      .querySelector("#pocket-settings-close")!
-      .addEventListener("click", () => {
-        minIn.value = slider.min;
-        maxIn.value = slider.max;
-        toggleSettings();
-      });
-    document
-      .querySelector("#pocket-minmax-reset")!
-      .addEventListener("click", () => {
-        minIn.value = "0.5";
-        maxIn.value = "2";
-      });
-    document
-      .querySelector("#pocket-minmax-save")!
-      .addEventListener("click", () => {
-        slider.min = minIn.value || "0.5";
-        slider.max = maxIn.value || "2";
-        sliderMinSpan.textContent = `${Number(slider.min)}x`;
-        sliderMaxSpan.textContent = `${Number(slider.max)}x`;
-        localStorage.setItem("pocket-min", slider.min);
-        localStorage.setItem("pocket-max", slider.max);
-        apply();
-        toggleSettings();
-      });
-
-    // A-B Loop events
-    loopABtn.onclick = () => {
-      const el = mediaEls[0];
-      if (el) {
-        loopA = el.currentTime;
-        updateLoopUI();
+    // Close panel on outside click
+    document.addEventListener("click", (e) => {
+      if (
+        speedPanelOpen &&
+        !document
+          .querySelector("#pocket-speed-root")
+          ?.contains(e.target as Node)
+      ) {
+        speedPanelOpen = false;
+        if (speedPanel) speedPanel.style.display = "none";
+        if (speedIcon) speedIcon.classList.remove("pocket-active");
       }
-    };
-    loopBBtn.onclick = () => {
-      const el = mediaEls[0];
-      if (el) {
-        loopB = el.currentTime;
-        loopActive = true;
-        updateLoopUI();
-      }
-    };
-    loopClearBtn.onclick = () => {
-      loopA = null;
-      loopB = null;
-      loopActive = false;
-      updateLoopUI();
-    };
-
-    // Now-Playing sidebar offset fix
-    const fixPanelOffset = () => {
-      const np = document.getElementById("Desktop_PanelContainer_Id");
-      if (panel) panel.style.right = np ? `${np.offsetWidth + 16}px` : "";
-    };
-    fixPanelOffset();
-    new MutationObserver(fixPanelOffset).observe(document.body, {
-      childList: true,
-      subtree: true,
     });
 
-    apply();
+    // Preset clicks
+    document.querySelectorAll(".pocket-speed-opt").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        applySpeed(Number((btn as HTMLElement).dataset.speed));
+      });
+    });
+
+    // Custom speed
+    document
+      .querySelector("#pocket-custom-apply")!
+      .addEventListener("click", () => {
+        applySpeed(Number(customSpeedIn.value));
+      });
+    customSpeedIn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") applySpeed(Number(customSpeedIn.value));
+    });
+
+    // Preserve pitch
+    ppCb.onchange = () => {
+      preservePitch = ppCb.checked;
+      localStorage.setItem("pocket-pp", String(preservePitch));
+      mediaEls.forEach((el) => {
+        el.preservesPitch = preservePitch;
+      });
+    };
+
+    // Loop buttons
+    loopABtn.onclick = () => setLoopPoint("a");
+    loopBBtn.onclick = () => setLoopPoint("b");
+    loopClearBtn.onclick = clearLoop;
+
+    // Apply initial speed
+    applySpeed(currentSpeed);
   };
 
-  // ── 10. Init with retry ─────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════
+  // 11. INIT WITH RETRY + RE-INJECTION
+  // ═══════════════════════════════════════════════════════════════
   let tries = 0;
   const init = () => {
     try {
       tries++;
-      if (!document.querySelector("#main")) throw "Main container not found";
+      if (!document.querySelector("#main")) throw "Main not found";
+      if (!document.querySelector('[data-testid="control-button-repeat"]'))
+        throw "Repeat button not found";
+      if (!document.querySelector('button[aria-describedby="volume-icon"]'))
+        throw "Volume button not found";
+
       addStyles();
-      addHTML();
+      addSpeedControl();
+      addLoopButtons();
       addJS();
       console.log("[Pocket] ✅ Injected");
+
+      // Re-inject if Spotify re-renders the player
+      setInterval(() => {
+        if (
+          !document.querySelector("#pocket-speed-root") ||
+          !document.querySelector("#pocket-loop-container")
+        ) {
+          try {
+            addSpeedControl();
+            addLoopButtons();
+            addJS();
+            console.log("[Pocket] 🔄 Re-injected");
+          } catch (_) {
+            /* retry next interval */
+          }
+        }
+      }, 2000);
     } catch (e) {
       console.log(`[Pocket] 🔄 #${tries}: ${e}`);
-      if (tries <= 30) setTimeout(init, 500);
+      if (tries <= 40) setTimeout(init, 500);
       else console.log("[Pocket] ❌ Failed");
     }
   };
