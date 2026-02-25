@@ -90,15 +90,39 @@
   const fmt = (s: number) =>
     `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
+  const MIN_LOOP_GAP = 5; // seconds
+
   const setLoopPoint = (point: "a" | "b") => {
     const el = mediaEls[0];
     if (!el) return;
-    if (point === "a") loopA = el.currentTime;
-    else loopB = el.currentTime;
+    const t = el.currentTime;
+
+    if (point === "a") {
+      // If B is set and new A would be too close or past B, clamp it
+      if (loopB !== null && t > loopB - MIN_LOOP_GAP) {
+        loopA = Math.max(0, loopB - MIN_LOOP_GAP);
+      } else {
+        loopA = t;
+      }
+    } else {
+      // If A is set and new B would be too close or before A, clamp it
+      if (loopA !== null && t < loopA + MIN_LOOP_GAP) {
+        const dur = el.duration || Infinity;
+        loopB = Math.min(dur, loopA + MIN_LOOP_GAP);
+      } else {
+        loopB = t;
+      }
+    }
+
     // Auto-sort: ensure A < B
     if (loopA !== null && loopB !== null && loopA > loopB) {
       [loopA, loopB] = [loopB, loopA];
     }
+    // Enforce minimum gap after sort
+    if (loopA !== null && loopB !== null && loopB - loopA < MIN_LOOP_GAP) {
+      loopB = loopA + MIN_LOOP_GAP;
+    }
+
     if (loopA !== null && loopB !== null) loopActive = true;
     updateLoopUI();
   };
@@ -113,17 +137,23 @@
   const updateLoopUI = () => {
     if (loopABtn) {
       loopABtn.classList.toggle("pocket-loop-set", loopA !== null);
-      loopABtn.title =
-        loopA !== null
-          ? `Loop start: ${fmt(loopA)} – click to update`
-          : "Set loop start (A)";
+      const tooltipA = loopABtn.querySelector(".pocket-tooltip");
+      if (tooltipA) {
+        tooltipA.textContent =
+          loopA !== null
+            ? `Loop start: ${fmt(loopA)} – click to update`
+            : "Set loop start point (A)";
+      }
     }
     if (loopBBtn) {
       loopBBtn.classList.toggle("pocket-loop-set", loopB !== null);
-      loopBBtn.title =
-        loopB !== null
-          ? `Loop end: ${fmt(loopB)} – click to update`
-          : "Set loop end (B)";
+      const tooltipB = loopBBtn.querySelector(".pocket-tooltip");
+      if (tooltipB) {
+        tooltipB.textContent =
+          loopB !== null
+            ? `Loop end: ${fmt(loopB)} – click to update`
+            : "Set loop end point (B)";
+      }
     }
     if (loopClearBtn) {
       loopClearBtn.style.display =
@@ -251,11 +281,16 @@
 
 /* ── A-B Loop Buttons ── */
 #pocket-loop-container{display:inline-flex;align-items:center;margin-left:8px;gap:2px}
-.pocket-loop-btn{background:none!important;border:none!important;color:#b3b3b3;cursor:pointer;font-size:.6875rem;font-weight:700;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;transition:color .12s,transform .12s}
+.pocket-loop-btn{position:relative;background:none!important;border:none!important;color:#b3b3b3;cursor:pointer;font-size:.6875rem;font-weight:700;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;transition:color .12s,transform .12s}
 .pocket-loop-btn:hover{color:#fff;transform:scale(1.1)}
 .pocket-loop-set{color:#1DB954!important}
 .pocket-loop-clear{font-size:.5625rem;width:22px;height:22px}
 .pocket-loop-clear:hover{color:#e74c3c!important}
+
+/* ── Tooltips ── */
+.pocket-loop-btn .pocket-tooltip{position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);background:#282828;color:#fff;font-size:.6875rem;font-weight:500;padding:6px 10px;border-radius:6px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .15s;z-index:10000;box-shadow:0 4px 12px rgba(0,0,0,.4);border:1px solid #3e3e3e}
+.pocket-loop-btn .pocket-tooltip::after{content:"";position:absolute;top:100%;left:50%;transform:translateX(-50%);border:5px solid transparent;border-top-color:#282828}
+.pocket-loop-btn:hover .pocket-tooltip{opacity:1}
 
 /* ── Timeline Overlay ── */
 #pocket-overlay{position:absolute;top:0;bottom:0;background:rgba(29,185,84,.22);pointer-events:none;border-radius:2px;z-index:1;display:none}
@@ -267,7 +302,7 @@
   };
 
   // 9. HTML CREATION
-  const PRESETS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
+  const PRESETS = [0.25, 0.5, 1, 1.25, 1.5, 1.75, 2];
 
   const addSpeedControl = () => {
     const old = document.querySelector("#pocket-speed-root");
@@ -313,9 +348,9 @@
     const c = _create("div");
     c.id = "pocket-loop-container";
     c.innerHTML = `
-<button class="pocket-loop-btn" id="pocket-loop-a" title="Set loop start (A)">A</button>
-<button class="pocket-loop-btn" id="pocket-loop-b" title="Set loop end (B)">B</button>
-<button class="pocket-loop-btn pocket-loop-clear" id="pocket-loop-clear" title="Clear loop" style="display:none">✕</button>`;
+<button class="pocket-loop-btn" id="pocket-loop-a"><span class="pocket-tooltip">Set loop start point (A)</span>A</button>
+<button class="pocket-loop-btn" id="pocket-loop-b"><span class="pocket-tooltip">Set loop end point (B)</span>B</button>
+<button class="pocket-loop-btn pocket-loop-clear" id="pocket-loop-clear" style="display:none"><span class="pocket-tooltip">Clear A-B loop</span>✕</button>`;
 
     const repeatBtn = document.querySelector(
       '[data-testid="control-button-repeat"]',
