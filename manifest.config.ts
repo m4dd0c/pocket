@@ -2,9 +2,9 @@ import { defineManifest } from "@crxjs/vite-plugin";
 
 export default defineManifest({
   manifest_version: 3,
-  name: "Pocket - Flow Trainer",
+  name: "Pocket - Spotify Speed Control & A-B Loop",
   description:
-    "Master your flow with A-B looping and precision speed control for Spotify.",
+    "Control Spotify playback speed (0.25x-4x) and set A-B loops to practice songs. The ultimate Spotify playback rate & loop extension.",
   version: "1.0.0",
   action: {
     default_popup: "index.html",
