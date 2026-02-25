@@ -55,8 +55,6 @@
   let loopBBtn: HTMLButtonElement;
   let loopClearBtn: HTMLButtonElement;
   let overlayEl: HTMLDivElement | null = null;
-  let markerAEl: HTMLDivElement | null = null;
-  let markerBEl: HTMLDivElement | null = null;
 
   // 4. SPEED FUNCTIONS
   const applySpeed = (val: number) => {
@@ -169,50 +167,41 @@
     ) as HTMLElement | null;
     if (!bg) return null;
 
+    // Parent must be positioned for absolute overlay to work
+    bg.style.position = "relative";
+
     if (!overlayEl || !bg.contains(overlayEl)) {
       overlayEl = _create("div") as HTMLDivElement;
       overlayEl.id = "pocket-overlay";
-      markerAEl = _create("div") as HTMLDivElement;
-      markerAEl.className = "pocket-marker pocket-marker-a";
-      markerBEl = _create("div") as HTMLDivElement;
-      markerBEl.className = "pocket-marker pocket-marker-b";
       bg.appendChild(overlayEl);
-      bg.appendChild(markerAEl);
-      bg.appendChild(markerBEl);
     }
     return bg;
   };
 
   const updateOverlay = () => {
-    const input = document.querySelector(
-      '[data-testid="playback-progressbar"] input[type="range"]',
-    ) as HTMLInputElement | null;
-    if (!input) return;
-    const maxMs = Number(input.max);
-    if (maxMs <= 0) return;
+    if (!ensureOverlay() || !overlayEl) return;
 
-    if (!ensureOverlay() || !overlayEl || !markerAEl || !markerBEl) return;
+    if (loopA !== null && loopB !== null) {
+      const el = mediaEls[0];
+      const dur = el?.duration;
+      if (!dur || dur <= 0 || !isFinite(dur)) return;
 
-    if (loopA !== null) {
-      const aPct = Math.min(100, ((loopA * 1000) / maxMs) * 100);
-      markerAEl.style.display = "block";
-      markerAEl.style.left = `${aPct}%`;
+      const aPct = Math.min(100, (loopA / dur) * 100);
+      const bPct = Math.min(100, (loopB / dur) * 100);
 
-      if (loopB !== null) {
-        const bPct = Math.min(100, ((loopB * 1000) / maxMs) * 100);
-        markerBEl.style.display = "block";
-        markerBEl.style.left = `${bPct}%`;
-        overlayEl.style.display = "block";
-        overlayEl.style.left = `${aPct}%`;
-        overlayEl.style.width = `${bPct - aPct}%`;
-      } else {
-        markerBEl.style.display = "none";
-        overlayEl.style.display = "none";
-      }
+      overlayEl.style.setProperty("display", "block", "important");
+      overlayEl.style.setProperty("left", `${aPct}%`, "important");
+      overlayEl.style.setProperty("width", `${bPct - aPct}%`, "important");
+      overlayEl.style.setProperty("background", "#ffa42b", "important");
+      overlayEl.style.setProperty("opacity", "0.5", "important");
+      overlayEl.style.setProperty("position", "absolute", "important");
+      overlayEl.style.setProperty("top", "0", "important");
+      overlayEl.style.setProperty("bottom", "0", "important");
+      overlayEl.style.setProperty("border-radius", "2px", "important");
+      overlayEl.style.setProperty("pointer-events", "none", "important");
+      overlayEl.style.setProperty("z-index", "2", "important");
     } else {
-      markerAEl.style.display = "none";
-      markerBEl.style.display = "none";
-      overlayEl.style.display = "none";
+      overlayEl.style.setProperty("display", "none", "important");
     }
   };
 
@@ -226,20 +215,18 @@
     }
     // Periodic checks (~500ms)
     if (++fc % 30 === 0) {
-      const input = document.querySelector(
-        '[data-testid="playback-progressbar"] input[type="range"]',
-      ) as HTMLInputElement | null;
-      if (input) {
-        const maxMs = Number(input.max);
+      const el = mediaEls[0];
+      if (el && isFinite(el.duration) && el.duration > 0) {
+        const durMs = el.duration * 1000;
         // Track change → auto-clear loop
         if (
           lastDuration > 0 &&
-          Math.abs(maxMs - lastDuration) > 1000 &&
+          Math.abs(durMs - lastDuration) > 1000 &&
           loopActive
         ) {
           clearLoop();
         }
-        lastDuration = maxMs;
+        lastDuration = durMs;
       }
       // Keep overlay in sync (Spotify may re-render)
       if (loopA !== null || loopB !== null) updateOverlay();
@@ -293,16 +280,13 @@
 .pocket-loop-btn:hover .pocket-tooltip{opacity:1}
 
 /* ── Timeline Overlay ── */
-#pocket-overlay{position:absolute;top:0;bottom:0;background:rgba(29,185,84,.22);pointer-events:none;border-radius:2px;z-index:1;display:none}
-.pocket-marker{position:absolute;top:-4px;bottom:-4px;width:3px;background:#1DB954;border-radius:1.5px;pointer-events:none;z-index:2;display:none;transform:translateX(-50%)}
-.pocket-marker-a{background:#1DB954}
-.pocket-marker-b{background:#1DB954}
+#pocket-overlay{position:absolute;top:0;bottom:0;background:#a855f7;opacity:.45;pointer-events:none;border-radius:2px;z-index:1;display:none}
 `;
     document.head.appendChild(s);
   };
 
   // 9. HTML CREATION
-  const PRESETS = [0.25, 0.5, 1, 1.25, 1.5, 1.75, 2];
+  const PRESETS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2];
 
   const addSpeedControl = () => {
     const old = document.querySelector("#pocket-speed-root");
