@@ -511,7 +511,7 @@
       addSpeedControl();
       addLoopButtons();
       addJS();
-      console.log("[Pocket] ✅ Injected");
+      console.log("[Pocket] Injected");
 
       // Re-inject if Spotify re-renders the player
       setInterval(() => {
