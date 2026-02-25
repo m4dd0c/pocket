@@ -2,6 +2,11 @@
 // Runs in MAIN world at document_start
 
 (() => {
+  const SPEED_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="1.25rem" height="1.25rem" fill="none" viewBox="0 0 96 96" class="pocket-speedometer">
+  <path stroke="currentColor" stroke-linecap="round" stroke-width="5" d="M85 68.5C85 57.6347 80.3791 47.8487 72.9953 41M10 68.5C10 47.7893 26.7893 31 47.5 31C49.0229 31 50.5246 31.0908 52 31.2672"></path>
+  <path stroke="currentColor" stroke-width="5" d="M56.3012 65.161C55.7311 66.8427 54.7004 68.3306 53.3265 69.4554V69.4554C47.1767 74.49 38.0683 69.2314 39.3536 61.3882V61.3882C39.6407 59.6359 40.414 57.9993 41.5853 56.6647L66.9458 27.7704C67.6673 26.9483 68.9956 27.7152 68.6444 28.7511L56.3012 65.161Z"></path>
+</svg>`;
+
   const _create = document.createElement.bind(document);
   const mediaEls: HTMLMediaElement[] = [];
   let currentSpeed = Number(localStorage.getItem("pocket-speed") || 1);
@@ -129,8 +134,20 @@
     if (isNaN(val)) return;
     currentSpeed = Math.round(Math.max(0.25, Math.min(4, val)) * 100) / 100;
     localStorage.setItem("pocket-speed", String(currentSpeed));
-    if (speedText)
+    if (speedText) {
+      // Unused fallback since we completely rewrite the innerHTML of speedIcon below,
+      // but keeping it here for safety if DOM ref is stale.
       speedText.textContent = currentSpeed === 1 ? "1x" : `${currentSpeed}x`;
+    }
+
+    if (speedIcon) {
+      if (currentSpeed === 1) {
+        speedIcon.innerHTML = SPEED_SVG;
+      } else {
+        speedIcon.innerHTML = `<span class="pocket-speed-text pocket-active">${currentSpeed}x</span>`;
+      }
+    }
+
     if (customSpeedIn) customSpeedIn.value = String(currentSpeed);
 
     document.querySelectorAll(".pocket-speed-opt").forEach((el) => {
@@ -380,7 +397,10 @@
     const icon = _create("div") as HTMLDivElement;
     icon.id = "pocket-speed-icon";
     icon.title = "Playback speed";
-    icon.innerHTML = `<svg width="1.25rem" height="1.25rem" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2.05v2c4.39.54 7.5 4.53 6.96 8.92c-.46 3.64-3.32 6.53-6.96 6.96v2c5.5-.55 9.5-5.43 8.95-10.93c-.45-4.75-4.22-8.5-8.95-8.97v.02M5.67 19.74A9.994 9.994 0 0 0 11 22v-2a8.002 8.002 0 0 1-3.9-1.63l-1.43 1.37m1.43-14c1.12-.9 2.47-1.48 3.9-1.68v-2c-1.95.19-3.81.94-5.33 2.2L7.1 5.74M5.69 7.1L4.26 5.67A9.885 9.885 0 0 0 2.05 11h2c.19-1.42.75-2.77 1.64-3.9M4.06 13h-2c.2 1.96.97 3.81 2.21 5.33l1.42-1.43A8.002 8.002 0 0 1 4.06 13M10 16.5l6-4.5l-6-4.5v9z"/></svg><span class="pocket-speed-text">${currentSpeed === 1 ? "1x" : currentSpeed + "x"}</span>`;
+    icon.innerHTML =
+      currentSpeed === 1
+        ? SPEED_SVG
+        : `<span class="pocket-speed-text pocket-active">${currentSpeed}x</span>`;
 
     // Panel
     const panel = _create("div");
@@ -472,15 +492,15 @@
     document
       .querySelector("#pocket-custom-apply")!
       .addEventListener("click", () => {
-        applySpeed(Number(customSpeedIn.value));
+        applySpeed(Number(customSpeedIn!.value));
       });
-    customSpeedIn.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") applySpeed(Number(customSpeedIn.value));
+    customSpeedIn!.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") applySpeed(Number(customSpeedIn!.value));
     });
 
     // Preserve pitch
     ppCb.onchange = () => {
-      preservePitch = ppCb.checked;
+      preservePitch = ppCb!.checked;
       localStorage.setItem("pocket-pp", String(preservePitch));
       mediaEls.forEach((el) => {
         el.preservesPitch = preservePitch;
