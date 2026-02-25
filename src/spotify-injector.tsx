@@ -56,6 +56,74 @@
   let loopClearBtn: HTMLButtonElement;
   let overlayEl: HTMLDivElement | null = null;
 
+  // ── HELPERS: JIT Element & Time Resolution ──
+  const parseTime = (str: string) => {
+    const parts = str.split(":").map(Number);
+    if (parts.length === 2) return parts[0] * 60 + parts[1];
+    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    return 0;
+  };
+
+  const getUIDuration = (): number => {
+    const durEl = document.querySelector('[data-testid="playback-duration"]');
+    if (durEl && durEl.textContent) return parseTime(durEl.textContent);
+    return 0;
+  };
+
+  const getActiveMedia = (): HTMLMediaElement | null => {
+    const uiDur = getUIDuration();
+
+    const isValidMedia = (el: HTMLMediaElement) => {
+      if (!isFinite(el.duration) || el.duration <= 0) return false;
+      // Visualizers typically are loop videos 3-8 seconds long. Real tracks are longer,
+      // or at least match the UI duration.
+      if (uiDur > 0) {
+        return Math.abs(el.duration - uiDur) < 2; // match within 2 seconds
+      }
+      return el.duration > 15; // fallback threshold if UI didn't parse
+    };
+
+    // 1. Prioritize playing elements
+    const capturedPlaying = [...mediaEls]
+      .reverse()
+      .find((el) => isValidMedia(el) && !el.paused);
+    if (capturedPlaying) return capturedPlaying;
+
+    // 2. Fallback to any valid captured element
+    const capturedValid = [...mediaEls].reverse().find(isValidMedia);
+    if (capturedValid) return capturedValid;
+
+    // 3. Fallback to DOM queries
+    const all = Array.from(
+      document.querySelectorAll("video, audio"),
+    ) as HTMLMediaElement[];
+    const domPlaying = all
+      .reverse()
+      .find((el) => isValidMedia(el) && !el.paused);
+    if (domPlaying) return domPlaying;
+
+    return all.reverse().find(isValidMedia) || null;
+  };
+
+  const getCurrentTime = (): number => {
+    const el = getActiveMedia();
+    const posEl = document.querySelector('[data-testid="playback-position"]');
+    const uiTime =
+      posEl && posEl.textContent ? parseTime(posEl.textContent) : 0;
+
+    // Use video time if it's playing/active, otherwise trust the UI (scrubbing before play)
+    if (el && el.currentTime > 0) {
+      return el.currentTime;
+    }
+    return uiTime;
+  };
+
+  const getDuration = (): number => {
+    const el = getActiveMedia();
+    if (el && isFinite(el.duration) && el.duration > 0) return el.duration;
+    return getUIDuration();
+  };
+
   // 4. SPEED FUNCTIONS
   const applySpeed = (val: number) => {
     if (isNaN(val)) return;
@@ -70,7 +138,18 @@
       el.classList.toggle("pocket-speed-active", s === currentSpeed);
     });
 
+    const activeEl = getActiveMedia();
+    if (activeEl) {
+      // eslint-disable-next-line
+      (activeEl as any).playbackRate = {
+        source: "pocket",
+        value: currentSpeed,
+      };
+      activeEl.preservesPitch = preservePitch;
+    }
+
     mediaEls.forEach((el) => {
+      if (!el.isConnected) return;
       // eslint-disable-next-line
       (el as any).playbackRate = { source: "pocket", value: currentSpeed };
       el.preservesPitch = preservePitch;
@@ -91,9 +170,9 @@
   const MIN_LOOP_GAP = 5; // seconds
 
   const setLoopPoint = (point: "a" | "b") => {
-    const el = mediaEls[0];
-    if (!el) return;
-    const t = el.currentTime;
+    const t = getCurrentTime();
+
+    // We don't abort anymore if video tag isn't there, because we can read from UI!
 
     if (point === "a") {
       // If B is set and new A would be too close or past B, clamp it
@@ -105,7 +184,7 @@
     } else {
       // If A is set and new B would be too close or before A, clamp it
       if (loopA !== null && t < loopA + MIN_LOOP_GAP) {
-        const dur = el.duration || Infinity;
+        const dur = getDuration() || Infinity;
         loopB = Math.min(dur, loopA + MIN_LOOP_GAP);
       } else {
         loopB = t;
@@ -182,9 +261,8 @@
     if (!ensureOverlay() || !overlayEl) return;
 
     if (loopA !== null && loopB !== null) {
-      const el = mediaEls[0];
-      const dur = el?.duration;
-      if (!dur || dur <= 0 || !isFinite(dur)) return;
+      const dur = getDuration();
+      if (!dur || dur <= 0) return;
 
       const aPct = Math.min(100, (loopA / dur) * 100);
       const bPct = Math.min(100, (loopB / dur) * 100);
@@ -208,16 +286,19 @@
   // 7. RAF LOOP
   let fc = 0;
   const tick = () => {
+    const el = getActiveMedia();
+
     // Loop enforcement
     if (loopActive && loopA !== null && loopB !== null) {
-      const el = mediaEls[0];
-      if (el && el.currentTime >= loopB) el.currentTime = loopA;
+      if (el && el.currentTime >= loopB) {
+        el.currentTime = loopA;
+      }
     }
     // Periodic checks (~500ms)
     if (++fc % 30 === 0) {
-      const el = mediaEls[0];
-      if (el && isFinite(el.duration) && el.duration > 0) {
-        const durMs = el.duration * 1000;
+      const dur = getDuration();
+      if (dur > 0) {
+        const durMs = dur * 1000;
         // Track change → auto-clear loop
         if (
           lastDuration > 0 &&
@@ -451,7 +532,7 @@
       }, 2000);
     } catch (e) {
       console.log(`[Pocket] 🔄 #${tries}: ${e}`);
-      if (tries <= 40) setTimeout(init, 500);
+      if (tries <= 120) setTimeout(init, 500);
       else console.log("[Pocket] Failed");
     }
   };
