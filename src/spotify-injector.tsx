@@ -7,14 +7,13 @@
   let currentSpeed = Number(localStorage.getItem("pocket-speed") || 1);
   let preservePitch = localStorage.getItem("pocket-pp") !== "false";
 
-  // ═══════════════════════════════════════════════════════════════
   // 1. PLAYBACK RATE PROTECTION
-  // ═══════════════════════════════════════════════════════════════
   const desc = Object.getOwnPropertyDescriptor(
     HTMLMediaElement.prototype,
     "playbackRate",
   );
   Object.defineProperty(HTMLMediaElement.prototype, "playbackRate", {
+    // eslint-disable-next-line
     set(value: any) {
       if (this.parentElement?.className?.toLowerCase().includes("canvas")) {
         desc!.set!.call(this, 1);
@@ -28,9 +27,7 @@
     },
   });
 
-  // ═══════════════════════════════════════════════════════════════
   // 2. ELEMENT DRAGNET
-  // ═══════════════════════════════════════════════════════════════
   document.createElement = function (
     tag: string,
     opts?: ElementCreationOptions,
@@ -41,9 +38,7 @@
     return el;
   };
 
-  // ═══════════════════════════════════════════════════════════════
   // 3. STATE
-  // ═══════════════════════════════════════════════════════════════
   let loopA: number | null = null;
   let loopB: number | null = null;
   let loopActive = false;
@@ -63,9 +58,7 @@
   let markerAEl: HTMLDivElement | null = null;
   let markerBEl: HTMLDivElement | null = null;
 
-  // ═══════════════════════════════════════════════════════════════
   // 4. SPEED FUNCTIONS
-  // ═══════════════════════════════════════════════════════════════
   const applySpeed = (val: number) => {
     if (isNaN(val)) return;
     currentSpeed = Math.round(Math.max(0.25, Math.min(4, val)) * 100) / 100;
@@ -80,6 +73,7 @@
     });
 
     mediaEls.forEach((el) => {
+      // eslint-disable-next-line
       (el as any).playbackRate = { source: "pocket", value: currentSpeed };
       el.preservesPitch = preservePitch;
     });
@@ -92,9 +86,7 @@
     if (speedIcon) speedIcon.classList.toggle("pocket-active", speedPanelOpen);
   };
 
-  // ═══════════════════════════════════════════════════════════════
   // 5. LOOP FUNCTIONS
-  // ═══════════════════════════════════════════════════════════════
   const fmt = (s: number) =>
     `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
@@ -140,9 +132,7 @@
     updateOverlay();
   };
 
-  // ═══════════════════════════════════════════════════════════════
   // 6. TIMELINE OVERLAY
-  // ═══════════════════════════════════════════════════════════════
   const ensureOverlay = (): HTMLElement | null => {
     const bg = document.querySelector(
       '[data-testid="progress-bar-background"]',
@@ -196,9 +186,7 @@
     }
   };
 
-  // ═══════════════════════════════════════════════════════════════
   // 7. RAF LOOP
-  // ═══════════════════════════════════════════════════════════════
   let fc = 0;
   const tick = () => {
     // Loop enforcement
@@ -230,9 +218,7 @@
   };
   requestAnimationFrame(tick);
 
-  // ═══════════════════════════════════════════════════════════════
   // 8. CSS
-  // ═══════════════════════════════════════════════════════════════
   const addStyles = () => {
     const s = _create("style");
     s.textContent = `
@@ -280,9 +266,7 @@
     document.head.appendChild(s);
   };
 
-  // ═══════════════════════════════════════════════════════════════
   // 9. HTML CREATION
-  // ═══════════════════════════════════════════════════════════════
   const PRESETS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
 
   const addSpeedControl = () => {
@@ -340,9 +324,7 @@
     repeatBtn.parentElement!.appendChild(c);
   };
 
-  // ═══════════════════════════════════════════════════════════════
   // 10. EVENT BINDING
-  // ═══════════════════════════════════════════════════════════════
   const addJS = () => {
     speedIcon = document.querySelector("#pocket-speed-icon") as HTMLDivElement;
     speedPanel = document.querySelector(
@@ -414,9 +396,7 @@
     applySpeed(currentSpeed);
   };
 
-  // ═══════════════════════════════════════════════════════════════
   // 11. INIT WITH RETRY + RE-INJECTION
-  // ═══════════════════════════════════════════════════════════════
   let tries = 0;
   const init = () => {
     try {
@@ -444,6 +424,7 @@
             addLoopButtons();
             addJS();
             console.log("[Pocket] 🔄 Re-injected");
+            // eslint-disable-next-line
           } catch (_) {
             /* retry next interval */
           }
@@ -452,7 +433,7 @@
     } catch (e) {
       console.log(`[Pocket] 🔄 #${tries}: ${e}`);
       if (tries <= 40) setTimeout(init, 500);
-      else console.log("[Pocket] ❌ Failed");
+      else console.log("[Pocket] Failed");
     }
   };
 
